@@ -1,13 +1,45 @@
 const fs = require("fs");
-const fsp = require("fs").promises;
 const csv = require("csv-parser");
 const axios = require("axios");
 
-async function readJSON() {
-  const filePath = "./urls.json";
-  const data = await fsp.readFile(filePath, "utf8");
-  json = JSON.parse(data);
-  return json;
+async function writeLargeJsonObject(filePath, data) {
+  await fs.promises.writeFile(
+    filePath,
+    !filePath.includes("urls.json")
+      ? JSON.stringify(data, null, 2)
+      : JSON.stringify(data),
+    "utf-8"
+  );
+}
+
+async function readJSON(filePath) {
+  try {
+    const data = await fs.promises.readFile(filePath, "utf-8");
+    const json = JSON.parse(data);
+    return json;
+  } catch (err) {
+    console.error("Error reading JSON:", err);
+    return new Promise((resolve, reject) => {
+      const jsonStream = fs.createReadStream(filePath, { encoding: "utf8" });
+      let data = "";
+
+      jsonStream.on("data", (chunk) => {
+        data += chunk;
+      });
+
+      jsonStream.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      jsonStream.on("error", (err) => {
+        reject(err);
+      });
+    });
+  }
 }
 
 async function updateJsonFile(id, insert) {
@@ -15,8 +47,7 @@ async function updateJsonFile(id, insert) {
     let json = {}; // Try reading the file
     const filePath = "./urls.json";
     try {
-      const data = await fsp.readFile(filePath, "utf8");
-      json = JSON.parse(data);
+      json = await readJSON(filePath);
     } catch (err) {
       if (err.code !== "ENOENT") throw err; // Ignore file not found, but throw other errors
     } // Check if the key exists
@@ -27,7 +58,7 @@ async function updateJsonFile(id, insert) {
     } // Add new entry and write back
 
     json[id] = insert;
-    await fsp.writeFile(filePath, JSON.stringify(json, null, 2));
+    await writeLargeJsonObject(filePath, json);
   } catch (err) {
     console.error("Error handling JSON file:", err);
   }
@@ -74,4 +105,10 @@ async function downloadImage(url, outputPath) {
   });
 }
 
-module.exports = { updateJsonFile, processCSV, readJSON, downloadImage };
+module.exports = {
+  updateJsonFile,
+  processCSV,
+  readJSON,
+  downloadImage,
+  writeLargeJsonObject,
+};

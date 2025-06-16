@@ -1,85 +1,87 @@
-import csv
-import os
-from ebooklib import epub
+import json
+from decimal import Decimal, getcontext
+from creat_lib_epub import create_epub
+from validate_books import is_same_book
+from create_amazon_lib_epub import create_with_amazon_data_epub
 
-# Function to create an EPUB book
-def create_epub(book_id, category, title, author, publisher, year, notes, compartment, cover_image_path):
-    book = epub.EpubBook()
-
-    # Set metadata
-    book.set_identifier(book_id)
-    book.set_title(title)
-    book.set_language('en')
-    book.add_author(author)
-    book.add_metadata('DC', 'publisher', publisher)
-    book.add_metadata('DC', 'date', year)
-    book.add_metadata('DC', 'description', notes)
-    book.add_metadata('DC', 'subject', category)
-    book.add_metadata('DC', 'coverage', compartment)
-
-    # Add custom content
-    content = f"""
-    <html>
-    <head>
-    <title>{title}</title>
-    </head>
-    <body>
-    <h1>{title}</h1>
-    <p><strong>Author:</strong> {author}</p>
-    <p><strong>Publisher:</strong> {publisher}</p>
-    <p><strong>Year:</strong> {year}</p>
-    <p><strong>Notes:</strong> {notes}</p>
-    <p><strong>Compartment:</strong> {compartment}</p>
-    <p>This is a custom content section.</p>
-    </body>
-    </html>
-    """
-    chapter = epub.EpubHtml(title='Content', file_name='chap_01.xhtml', lang='en')
-    chapter.content = content
-    book.add_item(chapter)
-
-    # Add cover image if available
-    if os.path.exists(cover_image_path):
-        book.set_cover("cover.jpg", open(cover_image_path, 'rb').read())
-    else:
-        print("Cover does not exsist: " + book_id)
-
-    # Define Table Of Contents
-    book.toc = (epub.Link('chap_01.xhtml', 'Content', 'content'),)
-
-    # Add default NCX and Nav file
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-
-    # Define CSS style
-    style = 'BODY {color: white;}'
-    nav_css = epub.EpubItem(uid="style_nav", file_name="style/nav.css", media_type="text/css", content=style)
-    book.add_item(nav_css)
-
-    # Create spine
-    book.spine = ['nav', chapter]
-
-    # Write to the file
-    epub.write_epub(f'{title}.epub', book, {})
-
+def analyze_details(arr: list[str]):
+    utleriori_dettagli = []
+    dettagli_dict = {}
+    for item in arr:
+        bal = item.split(":")
+        if len(bal) == 2:
+            key, value = bal
+            key = key.strip()[:-2]
+            value = value.strip()[2:]
+            dettagli_dict[key] = value
+        elif bal[0].startswith("n."):
+            utleriori_dettagli.append(bal[0])
+    if utleriori_dettagli:
+        dettagli_dict["utleriori_dettagli"] = utleriori_dettagli
+    return dettagli_dict 
 # Read the CSV file and create EPUB files
-with open('books.csv', newline='', encoding='utf-8') as csvfile:
-    reader = csv.DictReader(csvfile)
-    for idx, row in enumerate(reader):
-        book_id = row['ID']
-        category = row['CATEGORIA']
-        title = row['TITOLO']
-        author = row['AUTORE'] or "N/D"
-        publisher = row['CASA_EDITRICE'] or "N/D"
-        year = row['ANNO_PUBBLICAZIONE'] or "N/D"
-        notes = row['NOTE'] or "N/D"
-        compartment = row['SCOMPARTO'] or "N/D"
-        cover_image_path = f'covers/{book_id}.jpg'
-        
-        if not book_id or not category or not title:
-            print("ERROR AT: " + idx+1)
-        
-        create_epub(book_id, category, title, author, publisher, year, notes, compartment, cover_image_path)
+with open('cleanup.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+    
+getcontext().prec = 10
+totla_price = 0
+total_books = 0
+total_valide_book = 0
+estimated_price = 0
+book_not_found_price = Decimal(10)
 
-print("EPUB files have been created successfully.")
+for book in data:
+    total_books+=1
+    idBook=book
+    book = data[book]
+    totolo_lib: str = book["query"]
+    autore_lib: str = book["autore"]
+    editore_lib: str = book["casaEditrice"]
+    anno_lib: str = book["anno"]
+    if anno_lib.isnumeric():
+        anno_lib = int(anno_lib)
+    categoria_lib: str = book["categoria"]
+    scomparto_lib: str = book["scomparto"]
+    note_lib: str = book["note"]
+    if book["success"]:
+        search_on_amazon = book["urlSearch"]
+        image_downloaded = book["imageDwonloaded"]
+        bookdata = book["data"]
+        titolo_amazon: str = bookdata["itemTitle"]
+        autore_amazon: str = bookdata["itemAuthor"]
+        url_amazon: str = bookdata["itemUrl"]
+        desc_amazon: str = bookdata.get("description")
+        dettagli = bookdata.get("details")
+        if not titolo_amazon:
+            estimated_price += book_not_found_price
+            create_epub(book_id=idBook, category=categoria_lib, notes=note_lib, author=autore_lib,compartment=scomparto_lib, publisher=editore_lib,title=totolo_lib, year=anno_lib,cover_image_path=f"./covers/{image_downloaded}", searchOnAmazon=search_on_amazon)
+            continue 
+        
+        dettagli = analyze_details(dettagli)
+        verifica = is_same_book(autore_amazon=autore_amazon, autore_lib=autore_lib, titolo_amazon=titolo_amazon, titolo_lib=totolo_lib)       
+        
+        price: str = bookdata["itemPrice"]
+        if price:
+            total_valide_book += 1
+            number_price = price.split()[0].split(",")
+            if len(number_price) > 1 and number_price[0].isnumeric() and number_price[1].isnumeric():
+                price = Decimal(".".join(number_price))
+                totla_price += price
+                estimated_price += price
+        else:
+            estimated_price += book_not_found_price
+        
+        if verifica:
+            create_with_amazon_data_epub(book_id=idBook, autoreAmazon=autore_amazon, urlAmazon=url_amazon, descriptionAmazon=desc_amazon, dettagliAmazon=dettagli, priceAmazon=price, searchOnAmazon=search_on_amazon, category=categoria_lib, notes=note_lib, author=autore_lib,compartment=scomparto_lib, publisher=editore_lib,title=totolo_lib, year=anno_lib,cover_image_path=f"./covers/{image_downloaded}")
+        else: 
+            create_epub(book_id=idBook, category=categoria_lib, notes=note_lib, author=autore_lib,compartment=scomparto_lib, publisher=editore_lib,title=totolo_lib, year=anno_lib,cover_image_path=f"./covers/{image_downloaded}", searchOnAmazon=search_on_amazon)
+    else:
+        estimated_price += book_not_found_price
+        create_epub(book_id=idBook, category=categoria_lib, notes=note_lib, author=autore_lib,compartment=scomparto_lib, publisher=editore_lib,title=totolo_lib, year=anno_lib,cover_image_path=f"./covers/not_found.jpg", searchOnAmazon=search_on_amazon)
+print("total price: ", totla_price)
+print("estimated price: ", estimated_price)
+print("total books: ", total_books)
+print("total valide books: ", total_valide_book)
+
+#print("EPUB files have been created successfully.")
 

@@ -10,5 +10,13 @@ wheels/
 .venv
 #node modules of scrape_images
 scrape_images/node_modules/
+scrape_images/urls.json
+scrape_images/backup.json
 covers
 covers/*
+
+.vscode/*
+.vscode
+books.csv
+epubs
+epubs/*
